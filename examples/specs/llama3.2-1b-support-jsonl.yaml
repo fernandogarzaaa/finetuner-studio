@@ -1,0 +1,28 @@
+# Fine-tune Llama 3.2 1B Instruct on your own chat logs (JSONL, messages format).
+# Each line: {"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
+version: 1
+name: llama3.2-1b-support
+model:
+  base_model: meta-llama/Llama-3.2-1B-Instruct   # gated: set HF_TOKEN
+  quantization: 4bit
+  max_seq_length: 2048
+dataset:
+  source: jsonl
+  path: examples/data/support_sample.jsonl
+  format: messages
+  system_prompt: You are a concise, friendly support agent.
+  eval_size: 0.1
+training:
+  epochs: 3
+  learning_rate: 0.0001
+  per_device_batch_size: 1
+  gradient_accumulation_steps: 16
+evaluation:
+  metrics: [perplexity, token_f1, rouge_l]
+ship_rule:
+  primary_metric: token_f1
+  min_improvement: 0.05
+  guardrails:
+    - metric: perplexity
+      max_regression: 0.15
+  min_eval_samples: 20

@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "finetuner-studio"
+dynamic = ["version"]
+description = "Spec in, fine-tuned LLM and a ship / don't-ship verdict out. QLoRA training, base-vs-tuned evaluation, web UI."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "Fernando Garza" }]
+keywords = ["llm", "fine-tuning", "lora", "qlora", "peft", "trl", "evaluation"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Core: spec, metrics, verdict, API server. Light enough for CI and a UI-only host.
+dependencies = [
+  "pydantic>=2.6,<3",
+  "pyyaml>=6",
+  "typer>=0.12",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "sqlalchemy>=2.0",
+]
+
+[project.optional-dependencies]
+# The GPU stack, pinned to ranges whose APIs this code targets.
+train = [
+  "torch>=2.2",
+  "transformers>=4.46,<5",
+  "peft>=0.13,<1",
+  "trl>=0.12,<0.20",
+  "bitsandbytes>=0.43; platform_system == 'Linux'",
+  "accelerate>=0.34",
+  "datasets>=2.20",
+]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5"]
+
+[project.scripts]
+fts = "finetuner_studio.cli:main"
+
+[project.urls]
+Repository = "https://github.com/fernandogarzaaa/finetuner-studio"
+
+[tool.hatch.version]
+path = "src/finetuner_studio/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finetuner_studio"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: downloads a model and trains on CPU (run with -m slow)"]
+addopts = "-m 'not slow'"
