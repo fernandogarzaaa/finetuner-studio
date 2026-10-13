@@ -27,33 +27,27 @@ def load_tokenizer(spec: ModelSpec):
 
 def load_model(spec: ModelSpec, for_training: bool):
     import torch
-    from transformers import AutoModelForCausalLM
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
     dtype = resolve_dtype(spec.dtype)
     kwargs: dict[str, Any] = {
         "revision": spec.revision,
         "trust_remote_code": spec.trust_remote_code,
         "torch_dtype": dtype,
+        "device_map": "auto" if torch.cuda.is_available() else None,
     }
-    if torch.cuda.is_available():
-        kwargs["device_map"] = "auto"
     if spec.attn_implementation != "auto":
         kwargs["attn_implementation"] = spec.attn_implementation
 
-    if spec.quantization != "none":
-        if not torch.cuda.is_available():
-            raise RuntimeError("4-bit/8-bit quantization needs a CUDA GPU; set model.quantization: none")
-        from transformers import BitsAndBytesConfig
-
-        if spec.quantization == "4bit":
-            kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=dtype,
-            )
-        else:
-            kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+    if spec.quantization == "4bit":
+        kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=dtype,
+        )
+    elif spec.quantization == "8bit":
+        kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
     model = AutoModelForCausalLM.from_pretrained(spec.base_model, **kwargs)
     if for_training:

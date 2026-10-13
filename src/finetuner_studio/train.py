@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from pathlib import Path
-from typing import Any
 
 from .data import PreparedData
 from .events import Event, EventSink
@@ -35,32 +33,24 @@ def _callback(sink: EventSink):
                         },
                     )
                 )
-
-        def on_step_end(self, args, state, control, **kwargs):
             sink.emit(
-                Event("progress", {"stage": "train", "current": state.global_step, "total": state.max_steps})
+                Event(
+                    "progress",
+                    {"stage": "train", "current": state.global_step, "total": state.max_steps},
+                )
             )
 
     return EventCallback()
 
 
-def _sft_config(**kwargs: Any):
-    """Build an SFTConfig across TRL versions (max_seq_length was renamed max_length)."""
-    from trl import SFTConfig
-
-    names = {f.name for f in dataclasses.fields(SFTConfig)}
-    if "max_seq_length" in kwargs and "max_seq_length" not in names:
-        kwargs["max_length"] = kwargs.pop("max_seq_length")
-    return SFTConfig(**{k: v for k, v in kwargs.items() if k in names})
-
-
 def train(spec: RunSpec, data: PreparedData, run_dir: Path, sink: EventSink) -> Path:
-    import torch
     from peft import LoraConfig
-    from trl import SFTTrainer
+    from trl import SFTConfig, SFTTrainer
 
     tokenizer = load_tokenizer(spec.model)
     model, dtype = load_model(spec.model, for_training=True)
+
+    import torch
 
     lora = LoraConfig(
         r=spec.lora.r,
@@ -73,9 +63,9 @@ def train(spec: RunSpec, data: PreparedData, run_dir: Path, sink: EventSink) -> 
     )
 
     t = spec.training
-    on_gpu = torch.cuda.is_available()
-    config = _sft_config(
-        output_dir=str(run_dir / "checkpoints"),
+    checkpoints = run_dir / "checkpoints"
+    config = SFTConfig(
+        output_dir=str(checkpoints),
         num_train_epochs=t.epochs,
         max_steps=t.max_steps,
         learning_rate=t.learning_rate,
@@ -84,15 +74,15 @@ def train(spec: RunSpec, data: PreparedData, run_dir: Path, sink: EventSink) -> 
         warmup_ratio=t.warmup_ratio,
         lr_scheduler_type=t.lr_scheduler,
         weight_decay=t.weight_decay,
-        gradient_checkpointing=t.gradient_checkpointing and on_gpu,
+        gradient_checkpointing=t.gradient_checkpointing,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=t.logging_steps,
         save_steps=t.save_steps,
         save_total_limit=2,
         seed=t.seed,
-        optim=t.optim if on_gpu else "adamw_torch",
-        fp16=on_gpu and dtype == torch.float16,
-        bf16=on_gpu and dtype == torch.bfloat16,
+        optim=t.optim if torch.cuda.is_available() else "adamw_torch",
+        fp16=dtype == torch.float16,
+        bf16=dtype == torch.bfloat16,
         max_seq_length=spec.model.max_seq_length,
         packing=t.packing,
         report_to=[],
@@ -108,8 +98,11 @@ def train(spec: RunSpec, data: PreparedData, run_dir: Path, sink: EventSink) -> 
         callbacks=[_callback(sink)],
     )
 
-    trainable = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in trainer.model.parameters())
+    trainable, total = 0, 0
+    for p in trainer.model.parameters():
+        total += p.numel()
+        if p.requires_grad:
+            trainable += p.numel()
     sink.emit(
         Event(
             "log",
@@ -122,9 +115,18 @@ def train(spec: RunSpec, data: PreparedData, run_dir: Path, sink: EventSink) -> 
     )
 
     result = trainer.train()
-    loss = result.training_loss
-    msg = "training done" if math.isnan(loss) else f"training done: mean loss {loss:.4f}"
-    sink.emit(Event("log", {"level": "info", "message": msg}))
+    final_loss = result.training_loss
+    sink.emit(
+        Event(
+            "log",
+            {
+                "level": "info",
+                "message": f"training done: mean loss {final_loss:.4f}"
+                if not math.isnan(final_loss)
+                else "training done",
+            },
+        )
+    )
 
     adapter_dir = run_dir / "adapter"
     trainer.model.save_pretrained(str(adapter_dir))
@@ -132,6 +134,6 @@ def train(spec: RunSpec, data: PreparedData, run_dir: Path, sink: EventSink) -> 
     sink.emit(Event("artifact", {"kind": "adapter", "path": str(adapter_dir)}))
 
     del trainer, model
-    if on_gpu:
+    if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return adapter_dir

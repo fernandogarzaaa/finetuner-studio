@@ -22,6 +22,8 @@ from . import settings as settings_mod
 from .db import Database, RunStatus
 from .worker import Worker
 
+EXAMPLES_DIR = Path(__file__).resolve().parents[3] / "examples" / "specs"
+
 
 class SpecBody(BaseModel):
     spec_yaml: str
@@ -43,7 +45,7 @@ def _validation_errors(exc: Exception) -> list[dict[str, Any]]:
 def _parse_spec(text: str) -> RunSpec:
     try:
         return RunSpec.from_yaml(text)
-    except Exception as exc:  # YAML errors and validation errors
+    except Exception as exc:  # yaml errors, validation errors
         raise HTTPException(status_code=422, detail={"errors": _validation_errors(exc)}) from exc
 
 
@@ -54,8 +56,10 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        thread = None
         if start_worker:
-            threading.Thread(target=worker.serve_forever, name="fts-worker", daemon=True).start()
+            thread = threading.Thread(target=worker.serve_forever, name="fts-worker", daemon=True)
+            thread.start()
         yield
         worker.stop()
 
@@ -66,15 +70,11 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
 
     if cfg.cors_origins:
         app.add_middleware(
-            CORSMiddleware,
-            allow_origins=cfg.cors_origins,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            allow_credentials=True,
+            CORSMiddleware, allow_origins=cfg.cors_origins, allow_methods=["*"],
+            allow_headers=["*"], allow_credentials=True,
         )
 
     def auth(request: Request, token: str | None = Query(None)) -> None:
-        """Bearer token, or ?token= for EventSource clients that can't set headers."""
         if not cfg.api_token:
             return
         header = request.headers.get("authorization", "")
@@ -104,11 +104,11 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
 
     @app.get("/api/spec/examples", dependencies=api)
     def examples() -> list[dict[str, str]]:
-        if not cfg.examples_dir:
+        if not EXAMPLES_DIR.exists():
             return []
         return [
             {"name": p.stem, "spec_yaml": p.read_text(encoding="utf-8")}
-            for p in sorted(cfg.examples_dir.glob("*.yaml"))
+            for p in sorted(EXAMPLES_DIR.glob("*.yaml"))
         ]
 
     @app.post("/api/spec/validate", dependencies=api)
@@ -146,9 +146,7 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
         run = get_run_or_404(run_id)
         if RunStatus(run.status).terminal:
             raise HTTPException(status_code=409, detail=f"run is already {run.status}")
-        updated = db.request_cancel(run_id)
-        assert updated is not None
-        return updated.to_dict()
+        return db.request_cancel(run_id).to_dict()  # type: ignore[union-attr]
 
     @app.delete("/api/runs/{run_id}", status_code=204, dependencies=api)
     def delete(run_id: str) -> None:
@@ -160,12 +158,8 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
         db.delete_run(run_id)
 
     @app.get("/api/runs/{run_id}/events", dependencies=api)
-    def events(
-        run_id: str,
-        after: int = Query(0, ge=0),
-        limit: int = Query(1000, ge=1, le=5000),
-        types: str | None = None,
-    ):
+    def events(run_id: str, after: int = Query(0, ge=0), limit: int = Query(1000, ge=1, le=5000),
+               types: str | None = None):
         get_run_or_404(run_id)
         type_list = [t for t in types.split(",") if t] if types else None
         return [e.to_dict() for e in db.events_after(run_id, after, limit, type_list)]
@@ -173,7 +167,7 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
     @app.get("/api/runs/{run_id}/stream", dependencies=api)
     async def stream(run_id: str, request: Request, after: int = Query(0, ge=0)):
         get_run_or_404(run_id)
-        last_id = int(request.headers.get("last-event-id") or after)
+        last_id = int(request.headers.get("last-event-id", after) or 0)
 
         async def gen():
             nonlocal last_id
@@ -198,8 +192,7 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
                     await asyncio.sleep(0.5)
 
         return StreamingResponse(
-            gen(),
-            media_type="text/event-stream",
+            gen(), media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
@@ -218,8 +211,8 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
 
     @app.get("/api/runs/{run_id}/report.md", dependencies=api)
     def report_md(run_id: str):
-        text = _artifact(run_id, "report.md").read_text(encoding="utf-8")
-        return PlainTextResponse(text, media_type="text/markdown")
+        return PlainTextResponse(_artifact(run_id, "report.md").read_text(encoding="utf-8"),
+                                 media_type="text/markdown")
 
     @app.get("/api/runs/{run_id}/samples", dependencies=api)
     def samples(run_id: str, limit: int = Query(50, ge=1, le=1000)):
@@ -240,18 +233,17 @@ def create_app(settings: settings_mod.Settings | None = None, start_worker: bool
             shutil.make_archive(str(archive.with_suffix("")), "zip", adapter)
         return FileResponse(archive, filename=f"{run_id}-adapter.zip")
 
-    if cfg.web_dist and (cfg.web_dist / "index.html").exists():
-        dist = cfg.web_dist
-        if (dist / "assets").exists():
-            app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+    if cfg.web_dist and cfg.web_dist.exists():
+        index = cfg.web_dist / "index.html"
+        app.mount("/assets", StaticFiles(directory=cfg.web_dist / "assets"), name="assets")
 
         @app.get("/{path:path}", include_in_schema=False)
         def spa(path: str):
             if path.startswith("api/"):
                 raise HTTPException(status_code=404)
-            candidate = (dist / path).resolve()
-            if path and candidate.is_file() and dist.resolve() in candidate.parents:
+            candidate = cfg.web_dist / path
+            if path and candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(dist / "index.html")
+            return FileResponse(index)
 
     return app

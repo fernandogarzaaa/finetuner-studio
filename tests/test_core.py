@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from finetuner_studio.data import DataError, split_for_eval, to_messages
-from finetuner_studio.events import Event, ListSink, StdoutSink, parse_line
+from finetuner_studio.events import ListSink, StdoutSink, parse_line
 from finetuner_studio.metrics import exact_match, rouge_l, score_generations, token_f1
 from finetuner_studio.pipeline import run as run_pipeline
 from finetuner_studio.spec import DatasetSpec, Metric, RunSpec, ShipRule
@@ -22,7 +22,6 @@ training: {max_steps: 5, logging_steps: 1}
 
 
 # --- spec -------------------------------------------------------------------
-
 
 @pytest.mark.parametrize("path", sorted(EXAMPLES.glob("*.yaml")), ids=lambda p: p.stem)
 def test_example_specs_validate(path):
@@ -43,8 +42,9 @@ def test_unknown_field_rejected():
 
 
 def test_ship_rule_metric_must_be_evaluated():
+    bad = MINIMAL + "evaluation: {metrics: [perplexity]}\n"
     with pytest.raises(ValidationError, match="ship_rule uses metrics"):
-        RunSpec.from_yaml(MINIMAL + "evaluation: {metrics: [perplexity]}\n")
+        RunSpec.from_yaml(bad)
 
 
 def test_eval_size_bounds():
@@ -53,7 +53,6 @@ def test_eval_size_bounds():
 
 
 # --- data -------------------------------------------------------------------
-
 
 def test_alpaca_to_messages_with_input_and_system():
     spec = DatasetSpec(path="a/b", format="alpaca", system_prompt="be brief")
@@ -69,22 +68,20 @@ def test_column_mapping():
 
 
 def test_messages_must_end_with_assistant():
+    spec = DatasetSpec(path="a/b")
     with pytest.raises(DataError):
-        to_messages({"messages": [{"role": "user", "content": "hi"}]}, DatasetSpec(path="a/b"))
+        to_messages({"messages": [{"role": "user", "content": "hi"}]}, spec)
 
 
 # --- metrics ----------------------------------------------------------------
-
 
 def test_metrics():
     assert exact_match("The Cat.", "cat") == 1.0
     assert token_f1("a b c", "x y") == 0.0
     assert rouge_l("the cat sat on the mat", "the cat sat on the mat") == 1.0
     assert 0 < rouge_l("cat sat mat", "the cat sat on a mat") < 1
-    assert score_generations(["yes"], ["yes"], ["exact_match", "token_f1"]) == {
-        "exact_match": 1.0,
-        "token_f1": 1.0,
-    }
+    scores = score_generations(["yes"], ["yes"], ["exact_match", "token_f1"])
+    assert scores == {"exact_match": 1.0, "token_f1": 1.0}
 
 
 # --- verdict ----------------------------------------------------------------
@@ -116,10 +113,12 @@ def test_inconclusive_on_tiny_eval():
 
 # --- events / pipeline ------------------------------------------------------
 
-
 def test_event_line_roundtrip(capsys):
+    from finetuner_studio.events import Event
+
     StdoutSink().emit(Event("verdict", {"decision": "SHIP"}))
-    ev = parse_line(capsys.readouterr().out)
+    line = capsys.readouterr().out
+    ev = parse_line(line)
     assert ev.type == "verdict" and ev.data["decision"] == "SHIP"
     assert parse_line("plain text").type == "log"
 

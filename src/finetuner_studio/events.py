@@ -17,7 +17,7 @@ from typing import Any, Literal, Protocol
 EVENT_PREFIX = "@@FTS_EVENT "
 
 EventType = Literal[
-    "stage",  # {"stage": "load_data" | "train" | "evaluate" | "report", "status": "start"|"end"|"failed"}
+    "stage",  # {"stage": "load_data" | "train" | "evaluate" | "report", "status": "start"|"end"}
     "log",  # {"level": "info"|"warning"|"error", "message": str}
     "train_metrics",  # {"step": int, "loss": float, "learning_rate": float, "epoch": float}
     "progress",  # {"stage": str, "current": int, "total": int}
@@ -78,7 +78,10 @@ class ConsoleSink:
         elif event.type == "log":
             print(f"[{d.get('level', 'info')}] {d.get('message')}", flush=True)
         elif event.type == "train_metrics":
-            print(f"step {d.get('step')}: loss={d.get('loss')} lr={d.get('learning_rate')}", flush=True)
+            print(
+                f"step {d.get('step')}: loss={d.get('loss')} lr={d.get('learning_rate')}",
+                flush=True,
+            )
         elif event.type == "eval_result":
             print(f"eval[{d.get('model')}]: {d.get('metrics')}", flush=True)
         elif event.type == "verdict":

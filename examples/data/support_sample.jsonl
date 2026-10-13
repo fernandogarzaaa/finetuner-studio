@@ -3,6 +3,3 @@
 {"messages": [{"role": "user", "content": "Do you ship to Cebu?"}, {"role": "assistant", "content": "Yes, we ship nationwide. Cebu deliveries usually take 3 to 5 business days."}]}
 {"messages": [{"role": "user", "content": "How do I cancel my subscription?"}, {"role": "assistant", "content": "Open Account > Subscription and tap Cancel. You keep access until the end of the billing period."}]}
 {"messages": [{"role": "user", "content": "Is cash on delivery available?"}, {"role": "assistant", "content": "Yes, COD is available for orders under PHP 5,000."}]}
-{"messages": [{"role": "user", "content": "What are your support hours?"}, {"role": "assistant", "content": "We're online Monday to Saturday, 9 am to 6 pm Philippine time."}]}
-{"messages": [{"role": "user", "content": "My package arrived damaged. What now?"}, {"role": "assistant", "content": "Sorry about that. Send a photo through Orders > Report a problem within 7 days and we'll replace it or refund you."}]}
-{"messages": [{"role": "user", "content": "Can I pay with GCash?"}, {"role": "assistant", "content": "Yes, GCash and Maya both work at checkout."}]}

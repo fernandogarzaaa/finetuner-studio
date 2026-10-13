@@ -29,7 +29,7 @@ class _Stage:
 
 
 def run(spec: RunSpec, run_dir: Path, sink: EventSink, simulate: bool = False) -> dict[str, Any]:
-    """Execute a run and return the report. Emits an error event and re-raises on failure."""
+    """Execute a run. Returns the report dict. Raises on failure after emitting an error event."""
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "spec.yaml").write_text(spec.to_yaml(), encoding="utf-8")
     try:
@@ -97,12 +97,8 @@ def _simulate(spec: RunSpec, run_dir: Path, sink: EventSink) -> dict[str, Any]:
                 sink.emit(
                     Event(
                         "train_metrics",
-                        {
-                            "step": step,
-                            "loss": round(loss, 4),
-                            "learning_rate": spec.training.learning_rate,
-                            "epoch": step / steps,
-                        },
+                        {"step": step, "loss": round(loss, 4),
+                         "learning_rate": spec.training.learning_rate, "epoch": step / steps},
                     )
                 )
             sink.emit(Event("progress", {"stage": "train", "current": step, "total": steps}))

@@ -3,7 +3,7 @@ __pycache__/
 *.egg-info/
 .venv/
 .fts/
-/runs/
+runs/
 dist/
 build/
 .pytest_cache/
@@ -11,3 +11,4 @@ build/
 web/node_modules/
 web/dist/
 .env
+tsconfig.tsbuildinfo

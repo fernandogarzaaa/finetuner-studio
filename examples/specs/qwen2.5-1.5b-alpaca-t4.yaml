@@ -6,7 +6,7 @@ description: QLoRA instruction tuning, T4-safe defaults
 model:
   base_model: Qwen/Qwen2.5-1.5B-Instruct
   quantization: 4bit
-  dtype: auto            # float16 on T4, bfloat16 on Ampere+
+  dtype: auto            # resolves to float16 on T4, bfloat16 on Ampere+
   max_seq_length: 1024
 dataset:
   source: hf

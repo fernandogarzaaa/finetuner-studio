@@ -1,0 +1,28 @@
+# One API container and one GPU worker container sharing the data volume.
+services:
+  api:
+    build: .
+    command: fts serve --host 0.0.0.0 --port 8000 --no-worker
+    ports: ["8000:8000"]
+    environment:
+      - FTS_API_TOKEN=${FTS_API_TOKEN:-}
+    volumes: [fts-data:/data]
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: fts worker
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes: [fts-data:/data]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  fts-data:

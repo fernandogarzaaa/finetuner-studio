@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from finetuner_studio.server.app import create_app
-from finetuner_studio.server.settings import Settings, load
+from finetuner_studio.server.settings import Settings
 from finetuner_studio.server.worker import Worker
 
 SPEC = """
@@ -18,19 +18,14 @@ training: {max_steps: 5, logging_steps: 1}
 
 
 def _settings(tmp_path, token=None):
-    base = load()
-    return Settings(
-        home=tmp_path,
-        db_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
-        api_token=token,
-        poll_interval=0.1,
-        examples_dir=base.examples_dir,
-    )
+    return Settings(home=tmp_path, db_url=f"sqlite:///{tmp_path / 'db.sqlite'}", api_token=token,
+                    poll_interval=0.1)
 
 
 @pytest.fixture
 def client(tmp_path):
-    with TestClient(create_app(_settings(tmp_path))) as c:
+    app = create_app(_settings(tmp_path))
+    with TestClient(app) as c:
         yield c
 
 
@@ -46,7 +41,8 @@ def test_validate_reports_field_errors(client):
 
 
 def test_create_rejects_invalid_spec(client):
-    assert client.post("/api/runs", json={"spec_yaml": "name: [oops"}).status_code == 422
+    r = client.post("/api/runs", json={"spec_yaml": "name: [oops"})
+    assert r.status_code == 422
 
 
 def test_examples_listed(client):
@@ -55,7 +51,8 @@ def test_examples_listed(client):
 
 
 def test_auth_required_when_token_set(tmp_path):
-    with TestClient(create_app(_settings(tmp_path, token="s3cret"))) as c:
+    app = create_app(_settings(tmp_path, token="s3cret"))
+    with TestClient(app) as c:
         assert c.get("/api/runs").status_code == 401
         assert c.get("/api/runs", headers={"Authorization": "Bearer s3cret"}).status_code == 200
         assert c.get("/api/runs?token=s3cret").status_code == 200
@@ -64,7 +61,8 @@ def test_auth_required_when_token_set(tmp_path):
 
 def test_cancel_queued_run(client):
     run = client.post("/api/runs", json={"spec_yaml": SPEC, "simulate": True}).json()
-    assert client.post(f"/api/runs/{run['id']}/cancel").json()["status"] == "cancelled"
+    r = client.post(f"/api/runs/{run['id']}/cancel").json()
+    assert r["status"] == "cancelled"
     assert client.post(f"/api/runs/{run['id']}/cancel").status_code == 409
 
 
@@ -73,7 +71,8 @@ def test_end_to_end_simulated_run(client):
     assert run["status"] == "queued"
 
     worker: Worker = client.app.state.worker
-    threading.Thread(target=worker.serve_forever, daemon=True).start()
+    t = threading.Thread(target=worker.serve_forever, daemon=True)
+    t.start()
     deadline = time.time() + 60
     while time.time() < deadline:
         status = client.get(f"/api/runs/{run['id']}").json()
