@@ -1,9 +1,9 @@
 """Command line interface.
 
     fts validate spec.yaml
-    fts run spec.yaml                 # run in the foreground (Colab, scripts)
-    fts serve                         # API + web UI + in-process worker
-    fts serve --no-worker  &  fts worker   # split API and GPU worker
+    fts run spec.yaml                       # foreground run (Colab, scripts, CI)
+    fts serve                               # API + web UI + in-process worker
+    fts serve --no-worker  &  fts worker    # split API and GPU worker
 """
 
 from __future__ import annotations
@@ -66,14 +66,20 @@ def run(
     run_dir: Path = typer.Option(None, help="Defaults to <output.dir>/<name>"),
     simulate: bool = typer.Option(False, help="GPU-free dry run with synthetic numbers"),
 ) -> None:
-    """Run fine-tune -> eval -> verdict in the foreground."""
+    """Fine-tune, evaluate against the base, and print the verdict.
+
+    Exit code: 0 = SHIP or INCONCLUSIVE, 3 = DONT_SHIP, 1 = run failed, 2 = invalid spec.
+    """
     from .pipeline import run as run_pipeline
 
     spec = _load(spec_path)
     target = run_dir or Path(spec.output.dir) / spec.name
-    report = run_pipeline(spec, target, ConsoleSink(), simulate=simulate)
+    try:
+        report = run_pipeline(spec, target, ConsoleSink(), simulate=simulate)
+    except Exception as exc:
+        raise typer.Exit(1) from exc
     typer.echo(f"\nReport: {target / 'report.md'}")
-    raise typer.Exit(0 if report["verdict"]["decision"] != "DONT_SHIP" else 3)
+    raise typer.Exit(3 if report["verdict"]["decision"] == "DONT_SHIP" else 0)
 
 
 @app.command(hidden=True)

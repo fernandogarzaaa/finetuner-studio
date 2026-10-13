@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    delete,
     event,
     select,
     update,
@@ -42,6 +43,10 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _new_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -49,7 +54,7 @@ class Base(DeclarativeBase):
 class Run(Base):
     __tablename__ = "runs"
 
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex[:12])
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     name: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(16), default=RunStatus.queued.value, index=True)
     spec_yaml: Mapped[str] = mapped_column(Text)
@@ -109,9 +114,10 @@ def _iso(dt: datetime | None) -> str | None:
 
 class Database:
     def __init__(self, url: str) -> None:
-        connect_args = {"check_same_thread": False, "timeout": 30} if url.startswith("sqlite") else {}
+        sqlite = url.startswith("sqlite")
+        connect_args = {"check_same_thread": False, "timeout": 30} if sqlite else {}
         self.engine: Engine = create_engine(url, connect_args=connect_args, future=True)
-        if url.startswith("sqlite"):
+        if sqlite:
 
             @event.listens_for(self.engine, "connect")
             def _pragmas(conn, _):  # pragma: no cover - trivial
@@ -159,7 +165,8 @@ class Database:
             )
             if res.rowcount != 1:
                 return None
-        return self.get_run(run.id)
+            run_id = run.id
+        return self.get_run(run_id)
 
     def request_cancel(self, run_id: str) -> Run | None:
         with self.Session.begin() as s:
@@ -188,7 +195,7 @@ class Database:
             run = s.get(Run, run_id)
             if run is None:
                 return False
-            s.query(RunEvent).filter(RunEvent.run_id == run_id).delete()
+            s.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
             s.delete(run)
             return True
 
@@ -203,8 +210,9 @@ class Database:
                 for ts, t, d in events
             )
 
-    def events_after(self, run_id: str, after_id: int = 0, limit: int = 1000,
-                     types: list[str] | None = None) -> list[RunEvent]:
+    def events_after(
+        self, run_id: str, after_id: int = 0, limit: int = 1000, types: list[str] | None = None
+    ) -> list[RunEvent]:
         with self.Session() as s:
             q = select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.id > after_id)
             if types:

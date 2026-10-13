@@ -27,26 +27,25 @@ class EvalOutput:
 
 
 def _completion_nll(model, tokenizer, ex: EvalExample, max_len: int) -> tuple[float, int]:
+    """Summed NLL of the reference answer's tokens given the prompt."""
     import torch
 
-    prompt_text = tokenizer.apply_chat_template(
-        ex.prompt, add_generation_prompt=True, tokenize=False
-    )
+    prompt_text = tokenizer.apply_chat_template(ex.prompt, add_generation_prompt=True, tokenize=False)
     full_text = tokenizer.apply_chat_template(
         [*ex.prompt, {"role": "assistant", "content": ex.reference}], tokenize=False
     )
     prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
-    full_ids = tokenizer(full_text, add_special_tokens=False)["input_ids"]
-    full_ids = full_ids[:max_len]
+    full_ids = tokenizer(full_text, add_special_tokens=False)["input_ids"][:max_len]
     n_prompt = min(len(prompt_ids), len(full_ids))
-    if len(full_ids) - n_prompt < 1:
+    n = len(full_ids) - n_prompt
+    if n < 1:
         return 0.0, 0
     input_ids = torch.tensor([full_ids], device=model.device)
     labels = input_ids.clone()
     labels[:, :n_prompt] = -100
     with torch.no_grad():
         loss = model(input_ids=input_ids, labels=labels).loss
-    n = len(full_ids) - n_prompt
+    # HF shifts labels by one, so n tokens are scored when the prompt is non-empty.
     return float(loss) * n, n
 
 
@@ -84,7 +83,7 @@ def _generate(model, tokenizer, examples: list[EvalExample], spec: RunSpec) -> l
     return [o.strip() for o in outs]
 
 
-def _score(model, tokenizer, examples, spec, label, sink) -> tuple[dict[str, float], list[str]]:
+def _score(model, tokenizer, examples, spec: RunSpec, label: str, sink: EventSink):
     names = [m.value for m in spec.evaluation.metrics]
     result: dict[str, float] = {}
     if "perplexity" in names:
@@ -122,17 +121,12 @@ def evaluate(spec: RunSpec, eval_ds, adapter_dir: Path, run_dir: Path, sink: Eve
     samples_path = run_dir / "eval_samples.jsonl"
     with samples_path.open("w", encoding="utf-8") as f:
         for i, ex in enumerate(examples):
-            f.write(
-                json.dumps(
-                    {
-                        "prompt": ex.prompt,
-                        "reference": ex.reference,
-                        "base": base_preds[i] if i < len(base_preds) else None,
-                        "tuned": tuned_preds[i] if i < len(tuned_preds) else None,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
+            row = {
+                "prompt": ex.prompt,
+                "reference": ex.reference,
+                "base": base_preds[i] if i < len(base_preds) else None,
+                "tuned": tuned_preds[i] if i < len(tuned_preds) else None,
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
     sink.emit(Event("artifact", {"kind": "eval_samples", "path": str(samples_path)}))
     return EvalOutput(base=base, tuned=tuned, samples=len(examples))

@@ -15,7 +15,6 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
 
 from ..events import STAGES, parse_line
 from .db import Database, RunStatus, utcnow
@@ -23,7 +22,8 @@ from .settings import Settings
 
 log = logging.getLogger("fts.worker")
 
-_FLUSH_EVERY = 0.5  # seconds
+_FLUSH_EVERY = 0.5  # seconds between event batches written to the DB
+_CANCEL_CHECK_EVERY = 1.0  # seconds between cancel-flag checks
 _KILL_GRACE = 15  # seconds between SIGTERM and SIGKILL
 
 
@@ -50,8 +50,9 @@ class Worker:
                 self.execute(run.id)
             except Exception as exc:  # pragma: no cover - defensive
                 log.exception("run %s crashed the worker loop", run.id)
-                self.db.update_run(run.id, status=RunStatus.failed.value, error=str(exc),
-                                   finished_at=utcnow())
+                self.db.update_run(
+                    run.id, status=RunStatus.failed.value, error=str(exc), finished_at=utcnow()
+                )
 
     # ------------------------------------------------------------------------
 
@@ -64,8 +65,10 @@ class Worker:
         spec_path.write_text(run.spec_yaml, encoding="utf-8")
         self.db.update_run(run_id, run_dir=str(run_dir))
 
-        cmd = [sys.executable, "-u", "-m", "finetuner_studio.cli", "execute",
-               str(spec_path), "--run-dir", str(run_dir)]
+        cmd = [
+            sys.executable, "-u", "-m", "finetuner_studio.cli", "execute",
+            str(spec_path), "--run-dir", str(run_dir),
+        ]
         if run.simulate or self.settings.force_simulate:
             cmd.append("--simulate")
 
@@ -84,11 +87,10 @@ class Worker:
 
         threading.Thread(target=_reader, daemon=True).start()
 
-        state = {"decision": None, "summary": None, "error": None, "stage": None, "progress": None}
+        state: dict = {"decision": None, "summary": None, "error": None, "stage": None, "progress": 0.0}
         buf: list = []
-        last_flush = time.monotonic()
-        eof = False
-        cancelled = False
+        last_flush = last_cancel_check = time.monotonic()
+        eof = cancelled = False
         term_sent_at: float | None = None
 
         while not eof:
@@ -100,9 +102,7 @@ class Worker:
                 eof = True
             elif item:
                 ev = parse_line(item)
-                if ev.type == "log" and not ev.data.get("message", "").strip():
-                    pass
-                else:
+                if not (ev.type == "log" and not str(ev.data.get("message", "")).strip()):
                     buf.append((ev.ts, ev.type, ev.data))
                     self._track(state, ev.type, ev.data)
 
@@ -113,7 +113,8 @@ class Worker:
                 last_flush = now
                 self.db.update_run(run_id, stage=state["stage"], progress=state["progress"])
 
-            if not cancelled:
+            if not cancelled and now - last_cancel_check >= _CANCEL_CHECK_EVERY:
+                last_cancel_check = now
                 current = self.db.get_run(run_id)
                 if current is not None and current.cancel_requested:
                     cancelled = True
@@ -167,7 +168,3 @@ class Worker:
             state["progress"] = 1.0
         elif etype == "error":
             state["error"] = data.get("message")
-
-
-def run_dir_for(settings: Settings, run_id: str) -> Path:
-    return settings.runs_dir / run_id

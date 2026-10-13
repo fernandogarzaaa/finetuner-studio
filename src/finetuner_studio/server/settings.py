@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+_REPO = Path(__file__).resolve().parents[3]
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -15,6 +17,7 @@ class Settings:
     force_simulate: bool = False
     poll_interval: float = 1.0
     web_dist: Path | None = None
+    examples_dir: Path | None = None
 
     @property
     def runs_dir(self) -> Path:
@@ -25,11 +28,15 @@ def _bool(v: str | None) -> bool:
     return (v or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _path(env: str, default: Path) -> Path | None:
+    raw = os.environ.get(env)
+    p = Path(raw) if raw else default
+    return p if p.exists() else None
+
+
 def load() -> Settings:
     home = Path(os.environ.get("FTS_HOME", ".fts")).resolve()
     home.mkdir(parents=True, exist_ok=True)
-    web = os.environ.get("FTS_WEB_DIST")
-    default_web = Path(__file__).resolve().parents[3] / "web" / "dist"
     return Settings(
         home=home,
         db_url=os.environ.get("FTS_DB_URL", f"sqlite:///{home / 'fts.db'}"),
@@ -37,7 +44,8 @@ def load() -> Settings:
         cors_origins=[o for o in os.environ.get("FTS_CORS_ORIGINS", "").split(",") if o],
         force_simulate=_bool(os.environ.get("FTS_SIMULATE")),
         poll_interval=float(os.environ.get("FTS_POLL_INTERVAL", "1.0")),
-        web_dist=Path(web) if web else (default_web if default_web.exists() else None),
+        web_dist=_path("FTS_WEB_DIST", _REPO / "web" / "dist"),
+        examples_dir=_path("FTS_EXAMPLES_DIR", _REPO / "examples" / "specs"),
     )
 
 

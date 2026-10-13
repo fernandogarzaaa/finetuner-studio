@@ -1,7 +1,7 @@
 """GPU detection and precision selection.
 
 T4 (compute capability 7.5) has no bfloat16, so "auto" resolves to float16
-there and bfloat16 on Ampere and newer.
+there, bfloat16 on Ampere and newer, and float32 on CPU.
 """
 
 from __future__ import annotations
@@ -28,13 +28,12 @@ def gpus() -> list[GpuInfo]:
     out = []
     for i in range(torch.cuda.device_count()):
         p = torch.cuda.get_device_properties(i)
-        major, minor = p.major, p.minor
         out.append(
             GpuInfo(
                 name=p.name,
                 total_gb=round(p.total_memory / 1024**3, 1),
-                compute_capability=f"{major}.{minor}",
-                bf16=major >= 8,
+                compute_capability=f"{p.major}.{p.minor}",
+                bf16=p.major >= 8,
             )
         )
     return out
@@ -56,7 +55,7 @@ def resolve_dtype(requested: str):
         return torch.float16
     found = gpus()
     if not found:
-        return torch.float32  # CPU: half precision training is not supported
+        return torch.float32  # CPU: half-precision training is not supported
     if all(g.bf16 for g in found):
         return torch.bfloat16
     return torch.float16

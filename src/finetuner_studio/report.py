@@ -12,8 +12,13 @@ from .verdict import Verdict
 _BADGE = {"SHIP": "✅ SHIP", "DONT_SHIP": "⛔ DON'T SHIP", "INCONCLUSIVE": "⚠️ INCONCLUSIVE"}
 
 
-def build(spec: RunSpec, verdict: Verdict, base: dict[str, float], tuned: dict[str, float],
-          extra: dict[str, Any] | None = None) -> dict[str, Any]:
+def build(
+    spec: RunSpec,
+    verdict: Verdict,
+    base: dict[str, float],
+    tuned: dict[str, float],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "run": spec.name,
         "base_model": spec.model.base_model,
@@ -35,10 +40,10 @@ def to_markdown(report: dict[str, Any]) -> str:
         f"- Base model: `{report['base_model']}`",
         f"- Dataset: `{report['dataset']}`",
         f"- Eval samples: {v['eval_samples']}",
-        "",
-        "| Metric | Base | Tuned | Change |",
-        "|---|---:|---:|---:|",
     ]
+    if report.get("simulated"):
+        lines.append("- **Simulated run: numbers are synthetic**")
+    lines += ["", "| Metric | Base | Tuned | Change |", "|---|---:|---:|---:|"]
     for d in v["deltas"]:
         arrow = "↑ better" if d["higher_is_better"] else "↓ better"
         lines.append(
